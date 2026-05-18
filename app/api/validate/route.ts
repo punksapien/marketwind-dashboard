@@ -10,17 +10,28 @@ function sleep(ms: number) {
 function parseISTTimestamp(dateVal: string, isExpiry: boolean): number | null {
   if (!dateVal) return null;
   try {
-    const dt = new Date(dateVal);
-    if (isNaN(dt.getTime())) return null;
+    // Parse date components manually to avoid local-timezone issues.
+    // Input is always IST (Asia/Kolkata, UTC+5:30).
+    // "2026-04-06 17:18:09" or "2026-04-06"
+    const m = dateVal.match(/(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2}):(\d{1,2}):?(\d{1,2})?)?/);
+    if (!m) return null;
+
+    let hour = parseInt(m[4] || '0');
+    let min = parseInt(m[5] || '0');
+    let sec = parseInt(m[6] || '0');
 
     if (isExpiry) {
-      dt.setHours(23, 59, 59, 0);
+      hour = 23; min = 59; sec = 59;
     }
 
-    const utcMs = dt.getTime();
-    if (!dateVal.includes('Z') && !dateVal.includes('+') && !dateVal.includes('T')) {
-      return Math.floor((utcMs - 19800000) / 1000);
-    }
+    // Date.UTC is always UTC regardless of machine timezone.
+    // We treat the parsed components as IST, so subtract 5h30m to get UTC.
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // 19800000
+    const utcMs = Date.UTC(
+      parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]),
+      hour, min, sec
+    ) - IST_OFFSET_MS;
+
     return Math.floor(utcMs / 1000);
   } catch {
     return null;
