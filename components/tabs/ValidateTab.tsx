@@ -258,8 +258,28 @@ export function ValidateTab({
     { key: 'id', label: 'ID' },
     { key: 'market', label: 'Market' },
     {
+      key: 'systemResult',
+      label: 'System',
+      render: (row: Record<string, unknown>) => {
+        const call = calls.find((c) => c._uid === String(row._uid));
+        const reason = call?.terminal_reason || '';
+        if (!reason) return <span className="text-xs text-zinc-600">-</span>;
+        return (
+          <span
+            className="px-2 py-0.5 text-xs font-bold rounded"
+            style={{
+              backgroundColor: `${RESULT_COLORS[reason] || '#666'}22`,
+              color: RESULT_COLORS[reason] || '#999',
+            }}
+          >
+            {reason}
+          </span>
+        );
+      },
+    },
+    {
       key: 'result',
-      label: 'Result',
+      label: 'Real',
       render: (row: Record<string, unknown>) => {
         const r = String(row.result);
         return (
@@ -277,10 +297,13 @@ export function ValidateTab({
     },
     {
       key: 'durationFromSignalMin',
-      label: 'Time to Close',
+      label: 'Time (min)',
       align: 'right' as const,
-      render: (row: Record<string, unknown>) =>
-        formatDuration(row.durationFromSignalMin as number | null),
+      render: (row: Record<string, unknown>) => {
+        const v = row.durationFromSignalMin as number | null;
+        if (v === null || v === undefined) return '-';
+        return Math.round(v);
+      },
     },
     {
       key: 'resolvedAtIST',
