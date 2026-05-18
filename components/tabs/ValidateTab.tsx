@@ -224,6 +224,26 @@ export function ValidateTab({
       histogram,
       scatterData,
       resolvedCount: resolved.length,
+      // Call duration categories: Short (<6h), Medium (6h-2d), Long (2d-7d)
+      durationCategories: (() => {
+        const SHORT_MAX = 360;   // 6 hours in minutes
+        const MEDIUM_MAX = 2880; // 2 days in minutes
+
+        const shortCalls = resolved.filter((r) => r.durationFromSignalMin! < SHORT_MAX);
+        const medCalls = resolved.filter((r) => r.durationFromSignalMin! >= SHORT_MAX && r.durationFromSignalMin! < MEDIUM_MAX);
+        const longCalls = resolved.filter((r) => r.durationFromSignalMin! >= MEDIUM_MAX);
+
+        const hitRate = (arr: typeof resolved) =>
+          arr.length > 0
+            ? (arr.filter((r) => r.result === 'TAKE_PROFIT').length / arr.length) * 100
+            : 0;
+
+        return [
+          { label: 'Short (<6h)', count: shortCalls.length, tp: shortCalls.filter((r) => r.result === 'TAKE_PROFIT').length, sl: shortCalls.filter((r) => r.result === 'STOP_LOSS').length, hitRate: hitRate(shortCalls) },
+          { label: 'Medium (6h-2d)', count: medCalls.length, tp: medCalls.filter((r) => r.result === 'TAKE_PROFIT').length, sl: medCalls.filter((r) => r.result === 'STOP_LOSS').length, hitRate: hitRate(medCalls) },
+          { label: 'Long (2d-7d)', count: longCalls.length, tp: longCalls.filter((r) => r.result === 'TAKE_PROFIT').length, sl: longCalls.filter((r) => r.result === 'STOP_LOSS').length, hitRate: hitRate(longCalls) },
+        ];
+      })(),
     };
   }, [results, calls]);
 
@@ -685,6 +705,75 @@ export function ValidateTab({
                   ? 'TP resolves faster than SL — strong edge. Signals are entering with momentum, and winners run fast while losers take time to fail. This is the ideal pattern.'
                   : 'Similar resolution speed for TP and SL. Market is ranging — neither side has a decisive time advantage.'}
               </p>
+            </div>
+          )}
+
+          {/* Call Duration Categories */}
+          {timeAnalytics && (
+            <div className="grid md:grid-cols-2 gap-6">
+              <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+                <h3 className="text-sm font-medium text-zinc-400 mb-4">
+                  Call Duration Categories (TP vs SL)
+                </h3>
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={timeAnalytics.durationCategories}>
+                    <XAxis dataKey="label" tick={{ fill: '#a1a1aa', fontSize: 11 }} />
+                    <YAxis tick={{ fill: '#a1a1aa', fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a' }}
+                      labelStyle={{ color: '#a1a1aa' }}
+                    />
+                    <Bar dataKey="tp" name="Take Profit" stackId="a" fill={CHART_COLORS.green} />
+                    <Bar
+                      dataKey="sl"
+                      name="Stop Loss"
+                      stackId="a"
+                      fill={CHART_COLORS.red}
+                      radius={[4, 4, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+                <p className="text-[10px] text-zinc-600 mt-2">
+                  Short = resolves within 6h | Medium = 6h to 2 days | Long = 2 to 7 days
+                </p>
+              </div>
+
+              <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+                <h3 className="text-sm font-medium text-zinc-400 mb-4">
+                  Hit Rate by Call Duration
+                </h3>
+                <div className="space-y-4 mt-2">
+                  {timeAnalytics.durationCategories.map((cat) => (
+                    <div key={cat.label}>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="text-zinc-300 font-medium">{cat.label}</span>
+                        <span className="text-zinc-400">
+                          {cat.count} calls ({cat.tp} TP / {cat.sl} SL)
+                        </span>
+                      </div>
+                      <div className="w-full bg-zinc-800 rounded-full h-5 relative overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{
+                            width: `${cat.hitRate}%`,
+                            backgroundColor: cat.hitRate >= 60 ? CHART_COLORS.green : cat.hitRate >= 45 ? CHART_COLORS.orange : CHART_COLORS.red,
+                          }}
+                        />
+                        <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-white">
+                          {cat.hitRate.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-zinc-500 mt-4">
+                  {(() => {
+                    const cats = timeAnalytics.durationCategories;
+                    const best = cats.reduce((a, b) => (b.hitRate > a.hitRate && b.count >= 3 ? b : a), cats[0]);
+                    return `Best performing: ${best.label} at ${best.hitRate.toFixed(1)}% hit rate (${best.count} calls).`;
+                  })()}
+                </p>
+              </div>
             </div>
           )}
         </>
