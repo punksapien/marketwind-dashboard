@@ -1,9 +1,8 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell,
-  ScatterChart, Scatter, ZAxis, LineChart, Line,
 } from 'recharts';
 import { TradeCall } from '@/lib/types';
 import { runConfidenceBacktest, ConfidenceBacktest } from '@/lib/confidence';
@@ -11,81 +10,64 @@ import { KPICard } from '@/components/ui/KPICard';
 import { DataTable } from '@/components/ui/DataTable';
 import { CHART_COLORS } from '@/lib/constants';
 
-const BAND_COLORS: Record<string, string> = {
-  High: CHART_COLORS.green,
-  Medium: CHART_COLORS.orange,
-  Standard: CHART_COLORS.red,
+const TIER_COLORS: Record<string, string> = {
+  'Top Pick': CHART_COLORS.green,
+  'Standard Pick': CHART_COLORS.blue,
+  'Aggressive Pick': CHART_COLORS.orange,
 };
 
-export function ConfidenceTab({ calls, hasReal }: { calls: TradeCall[]; hasReal: boolean }) {
-  const bt: ConfidenceBacktest = useMemo(() => runConfidenceBacktest(calls), [calls]);
+const TIER_LABELS: Record<string, string> = {
+  'Top Pick': 'High Conviction',
+  'Standard Pick': 'Standard',
+  'Aggressive Pick': 'Moderate',
+};
 
-  const bandChartData = bt.bandStats.map((b) => ({
-    band: b.band,
-    systemHR: Number(b.systemHitRate.toFixed(1)),
-    ...(hasReal ? { realHR: Number(b.realHitRate.toFixed(1)) } : {}),
-    calls: b.totalCalls,
-    expectedR: Number(b.expectedR.toFixed(3)),
+function TierBadge({ tier }: { tier: string }) {
+  const color = TIER_COLORS[tier] || '#666';
+  return (
+    <span
+      className="px-2 py-0.5 text-xs font-bold rounded"
+      style={{ backgroundColor: `${color}22`, color }}
+    >
+      {TIER_LABELS[tier] || tier}
+    </span>
+  );
+}
+
+export function ConfidenceTab({ calls, hasReal }: { calls: TradeCall[]; hasReal: boolean }) {
+  const [scope, setScope] = useState<'all' | 'last100'>('all');
+
+  const bt: ConfidenceBacktest = useMemo(
+    () => runConfidenceBacktest(calls, scope),
+    [calls, scope]
+  );
+
+  const tierChartData = bt.tierStats.map((t) => ({
+    tier: TIER_LABELS[t.tier] || t.tier,
+    rawTier: t.tier,
+    systemHR: Number(t.systemHitRate.toFixed(1)),
+    ...(hasReal ? { realHR: Number(t.realHitRate.toFixed(1)) } : {}),
+    calls: t.totalCalls,
   }));
 
-  const calibrationData = bt.calibration
-    .filter((c) => c.count > 0)
-    .map((c) => ({
-      predicted: c.predicted,
-      actual: Number(c.actual.toFixed(1)),
-      count: c.count,
-    }));
+  const inputChartData = bt.inputBreakdown.map((ib) => ({
+    label: ib.label,
+    separation: Number(ib.separation.toFixed(1)),
+  }));
 
-  const featureData = bt.featureImportance
-    .sort((a, b) => Math.abs(b.separation) - Math.abs(a.separation))
-    .map((f) => ({
-      name: f.label,
-      correlation: Number((f.correlation * 100).toFixed(1)),
-      separation: Number(f.separation.toFixed(1)),
-    }));
+  // Distribution of tiers
+  const distData = bt.tierStats.map((t) => ({
+    name: TIER_LABELS[t.tier] || t.tier,
+    rawTier: t.tier,
+    value: t.totalCalls,
+  }));
 
-  // Score distribution
-  const scoreDistribution = useMemo(() => {
-    const buckets = [
-      { min: 0, max: 20, label: '0-20' },
-      { min: 20, max: 40, label: '20-40' },
-      { min: 40, max: 60, label: '40-60' },
-      { min: 60, max: 80, label: '60-80' },
-      { min: 80, max: 100, label: '80-100' },
-    ];
-    return buckets.map((b) => {
-      const inBucket = bt.scoredCalls.filter(
-        (c) =>
-          c.confidenceScore >= b.min &&
-          c.confidenceScore < b.max &&
-          c.status === 'APPROVED' &&
-          c.moderated_status !== 'ACTIVE' &&
-          c.moderated_status !== 'CANCELLED'
-      );
-      const hits = inBucket.filter((c) => c.is_system_hit).length;
-      return {
-        label: b.label,
-        count: inBucket.length,
-        hitRate: inBucket.length > 0 ? Number(((hits / inBucket.length) * 100).toFixed(1)) : 0,
-      };
-    });
-  }, [bt.scoredCalls]);
-
-  const bandColumns = [
+  // Tier stats table columns
+  const tierColumns = [
     {
-      key: 'band',
-      label: 'Band',
-      render: (row: Record<string, unknown>) => (
-        <span
-          className="px-2 py-0.5 text-xs font-bold rounded"
-          style={{
-            backgroundColor: `${BAND_COLORS[String(row.band)] || '#666'}22`,
-            color: BAND_COLORS[String(row.band)] || '#999',
-          }}
-        >
-          {String(row.band)}
-        </span>
-      ),
+      key: 'tier',
+      label: 'Classification',
+      render: (row: Record<string, unknown>) => <TierBadge tier={String(row.tier)} />,
     },
     { key: 'totalCalls', label: 'Calls', align: 'right' as const },
     {
@@ -102,38 +84,36 @@ export function ConfidenceTab({ calls, hasReal }: { calls: TradeCall[]; hasReal:
       },
     },
     ...(hasReal
-      ? [
-          {
-            key: 'realHitRate',
-            label: 'Real HR%',
-            align: 'right' as const,
-            render: (row: Record<string, unknown>) => {
-              const v = Number(row.realHitRate);
-              return (
-                <span style={{ color: v >= 50 ? CHART_COLORS.green : CHART_COLORS.red }}>
-                  {v.toFixed(1)}%
-                </span>
-              );
-            },
+      ? [{
+          key: 'realHitRate',
+          label: 'Real HR%',
+          align: 'right' as const,
+          render: (row: Record<string, unknown>) => {
+            const v = Number(row.realHitRate);
+            return (
+              <span style={{ color: v >= 50 ? CHART_COLORS.green : CHART_COLORS.red }}>
+                {v.toFixed(1)}%
+              </span>
+            );
           },
-        ]
+        }]
       : []),
     {
-      key: 'expectedR',
-      label: 'Expected R',
+      key: 'avgROI',
+      label: 'Avg ROI',
       align: 'right' as const,
       render: (row: Record<string, unknown>) => {
-        const v = Number(row.expectedR);
+        const v = Number(row.avgROI);
         return (
           <span style={{ color: v >= 0 ? CHART_COLORS.green : CHART_COLORS.red }}>
-            {v.toFixed(3)}R
+            {(v * 100).toFixed(2)}%
           </span>
         );
       },
     },
   ];
 
-  // Scored calls table (last 20)
+  // Recent scored calls table
   const recentScored = bt.scoredCalls
     .filter(
       (c) =>
@@ -141,41 +121,43 @@ export function ConfidenceTab({ calls, hasReal }: { calls: TradeCall[]; hasReal:
         c.moderated_status !== 'ACTIVE' &&
         c.moderated_status !== 'CANCELLED'
     )
-    .slice(-20)
+    .slice(-25)
     .reverse();
 
   const callColumns = [
     { key: 'id', label: 'ID' },
     { key: 'token', label: 'Token' },
-    { key: 'email', label: 'Advisor',
-      render: (row: Record<string, unknown>) => {
-        const e = String(row.email);
-        return <span className="text-xs">{e.split('@')[0]}</span>;
-      },
+    {
+      key: 'email',
+      label: 'Advisor',
+      render: (row: Record<string, unknown>) => (
+        <span className="text-xs">{String(row.email).split('@')[0]}</span>
+      ),
     },
     {
-      key: 'confidenceScore',
+      key: 'weightedScore',
       label: 'Score',
       align: 'right' as const,
-      render: (row: Record<string, unknown>) => {
-        const v = Number(row.confidenceScore);
-        return <span className="font-mono font-bold">{v}</span>;
-      },
+      render: (row: Record<string, unknown>) => (
+        <span className="font-mono font-bold">{Number(row.weightedScore).toFixed(2)}</span>
+      ),
     },
     {
-      key: 'confidenceBand',
-      label: 'Band',
-      render: (row: Record<string, unknown>) => (
-        <span
-          className="px-2 py-0.5 text-xs font-bold rounded"
-          style={{
-            backgroundColor: `${BAND_COLORS[String(row.confidenceBand)] || '#666'}22`,
-            color: BAND_COLORS[String(row.confidenceBand)] || '#999',
-          }}
-        >
-          {String(row.confidenceBand)}
-        </span>
-      ),
+      key: 'classification',
+      label: 'Tier',
+      render: (row: Record<string, unknown>) => <TierBadge tier={String(row.classification)} />,
+    },
+    {
+      key: 'inputs',
+      label: 'MW / Adv / Tok',
+      render: (row: Record<string, unknown>) => {
+        const inp = row.inputs as { mwScore: number; advisorHRScore: number; tokenHRScore: number };
+        return (
+          <span className="text-xs font-mono text-zinc-400">
+            {inp.mwScore} / {inp.advisorHRScore} / {inp.tokenHRScore}
+          </span>
+        );
+      },
     },
     {
       key: 'is_system_hit',
@@ -186,66 +168,78 @@ export function ConfidenceTab({ calls, hasReal }: { calls: TradeCall[]; hasReal:
         </span>
       ),
     },
-    {
-      key: 'rr_ratio',
-      label: 'RR',
-      align: 'right' as const,
-      render: (row: Record<string, unknown>) => Number(row.rr_ratio).toFixed(2),
-    },
   ];
 
   return (
     <div className="space-y-6">
-      {/* Header explanation */}
+      {/* Header */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-        <h3 className="text-sm font-medium text-white mb-2">
-          Confidence Score Backtest (v0 — Rule-Based)
-        </h3>
-        <p className="text-xs text-zinc-500 leading-relaxed">
-          Walk-forward backtest: each call is scored using <strong>only data from prior calls</strong>.
-          The score estimates P(TP hits before SL) based on 6 features: advisor track record,
-          RR quality, leverage band, token/category performance, direction alignment, and SL calibration.
-          Bands map to expected R per trade at your 1:1.5 R:R structure.
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-medium text-white mb-2">
+              Expert Picks Confidence Score Framework
+            </h3>
+            <p className="text-xs text-zinc-500 leading-relaxed">
+              Walk-forward backtest of the 3-input weighted scoring system.
+              Each call is classified using only prior data. MW Confidence (40%) + Advisor 14D HR
+              (35%) + Token HR (25%) → weighted score 1.0–3.0 → Top Pick / Standard / Aggressive.
+            </p>
+          </div>
+          <div className="flex gap-1">
+            {(['all', 'last100'] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => setScope(s)}
+                className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
+                  scope === s
+                    ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                    : 'bg-zinc-800 text-zinc-500 border border-zinc-700'
+                }`}
+              >
+                {s === 'all' ? 'All Calls' : 'Last 100'}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* KPI Summary */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <KPICard
-          label="High Band HR"
-          value={`${bt.overallStats.highHR.toFixed(1)}%`}
-          subtitle="~0.75R expected"
+          label="Top Pick HR"
+          value={`${bt.overallStats.topPickHR.toFixed(1)}%`}
+          subtitle="High Conviction"
           color={CHART_COLORS.green}
         />
         <KPICard
-          label="Medium Band HR"
-          value={`${bt.overallStats.mediumHR.toFixed(1)}%`}
-          subtitle="~0.50R expected"
+          label="Standard Pick HR"
+          value={`${bt.overallStats.standardHR.toFixed(1)}%`}
+          subtitle="Standard"
+          color={CHART_COLORS.blue}
+        />
+        <KPICard
+          label="Aggressive Pick HR"
+          value={`${bt.overallStats.aggressiveHR.toFixed(1)}%`}
+          subtitle="Moderate"
           color={CHART_COLORS.orange}
         />
         <KPICard
-          label="Standard Band HR"
-          value={`${bt.overallStats.standardHR.toFixed(1)}%`}
-          subtitle="~0.25R expected"
-          color={CHART_COLORS.red}
-        />
-        <KPICard
-          label="Band Separation"
+          label="Tier Separation"
           value={`${bt.overallStats.separation.toFixed(1)}pp`}
-          subtitle="High - Standard gap"
+          subtitle="Top - Aggressive gap"
           color={bt.overallStats.separation > 10 ? CHART_COLORS.green : CHART_COLORS.orange}
         />
         <KPICard label="Total Scored" value={bt.overallStats.totalScored} />
       </div>
 
-      {/* Charts Row 1 */}
+      {/* Charts */}
       <div className="grid md:grid-cols-2 gap-6">
-        {/* Band Performance */}
+        {/* Hit Rate by Tier */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-          <h3 className="text-sm font-medium text-zinc-400 mb-4">Hit Rate by Band</h3>
+          <h3 className="text-sm font-medium text-zinc-400 mb-4">Hit Rate by Classification</h3>
           <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={bandChartData}>
-              <XAxis dataKey="band" tick={{ fill: '#a1a1aa', fontSize: 12 }} />
+            <BarChart data={tierChartData}>
+              <XAxis dataKey="tier" tick={{ fill: '#a1a1aa', fontSize: 12 }} />
               <YAxis tick={{ fill: '#a1a1aa', fontSize: 11 }} domain={[0, 100]} />
               <Tooltip
                 contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a' }}
@@ -253,8 +247,8 @@ export function ConfidenceTab({ calls, hasReal }: { calls: TradeCall[]; hasReal:
               />
               <Legend />
               <Bar dataKey="systemHR" name="System HR%" radius={[4, 4, 0, 0]}>
-                {bandChartData.map((entry, i) => (
-                  <Cell key={i} fill={BAND_COLORS[entry.band] || '#666'} />
+                {tierChartData.map((entry, i) => (
+                  <Cell key={i} fill={TIER_COLORS[entry.rawTier] || '#666'} />
                 ))}
               </Bar>
               {hasReal && (
@@ -264,214 +258,183 @@ export function ConfidenceTab({ calls, hasReal }: { calls: TradeCall[]; hasReal:
           </ResponsiveContainer>
         </div>
 
-        {/* Calibration */}
+        {/* Tier Distribution + Input Separation */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
           <h3 className="text-sm font-medium text-zinc-400 mb-4">
-            Calibration (Predicted vs Actual)
+            Tier Distribution & Input Effectiveness
           </h3>
-          <ResponsiveContainer width="100%" height={280}>
-            <LineChart data={calibrationData}>
-              <XAxis
-                dataKey="predicted"
-                tick={{ fill: '#a1a1aa', fontSize: 11 }}
-                label={{ value: 'Predicted Score', position: 'bottom', fill: '#71717a', fontSize: 10 }}
-              />
-              <YAxis
-                tick={{ fill: '#a1a1aa', fontSize: 11 }}
-                domain={[0, 100]}
-                label={{ value: 'Actual HR%', angle: -90, position: 'insideLeft', fill: '#71717a', fontSize: 10 }}
-              />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a' }}
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                formatter={((value: any, name: any) =>
-                  name === 'actual' ? [`${value}%`, 'Actual HR'] : [value, name]
-                ) as any}
-              />
-              <Line
-                type="monotone"
-                dataKey="actual"
-                stroke={CHART_COLORS.green}
-                strokeWidth={2}
-                dot={{ r: 5 }}
-              />
-              {/* Perfect calibration line */}
-              <Line
-                type="monotone"
-                dataKey="predicted"
-                stroke="#555"
-                strokeWidth={1}
-                strokeDasharray="5 5"
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          {/* Tier distribution bars */}
+          <div className="space-y-3 mb-5">
+            {distData.map((d) => {
+              const total = bt.overallStats.totalScored || 1;
+              const pct = (d.value / total) * 100;
+              return (
+                <div key={d.name}>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-zinc-300">{d.name}</span>
+                    <span className="text-zinc-400">{d.value} calls ({pct.toFixed(0)}%)</span>
+                  </div>
+                  <div className="w-full bg-zinc-800 rounded-full h-4 overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${pct}%`,
+                        backgroundColor: TIER_COLORS[d.rawTier] || '#666',
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Input separation */}
+          <h4 className="text-xs text-zinc-500 uppercase tracking-wider mb-2">
+            Input Signal Strength (HR spread: score 3 vs score 1)
+          </h4>
+          {inputChartData.map((ib) => (
+            <div key={ib.label} className="flex items-center gap-3 mb-2">
+              <span className="text-xs text-zinc-400 w-28">{ib.label}</span>
+              <div className="flex-1 bg-zinc-800 rounded-full h-3 overflow-hidden relative">
+                <div
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${Math.min(Math.abs(ib.separation), 50) * 2}%`,
+                    backgroundColor: ib.separation > 0 ? CHART_COLORS.green : CHART_COLORS.red,
+                  }}
+                />
+              </div>
+              <span
+                className="text-xs font-mono w-14 text-right"
+                style={{ color: ib.separation > 0 ? CHART_COLORS.green : CHART_COLORS.red }}
+              >
+                {ib.separation > 0 ? '+' : ''}{ib.separation}pp
+              </span>
+            </div>
+          ))}
           <p className="text-[10px] text-zinc-600 mt-2">
-            Dashed line = perfect calibration. Closer is better.
+            Positive = score 3 calls outperform score 1 calls. Higher = stronger signal.
           </p>
         </div>
       </div>
 
-      {/* Charts Row 2 */}
-      <div className="grid md:grid-cols-2 gap-6">
-        {/* Feature Importance */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-          <h3 className="text-sm font-medium text-zinc-400 mb-4">
-            Feature Importance (Hit Rate Separation)
-          </h3>
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={featureData} layout="vertical">
-              <XAxis type="number" tick={{ fill: '#a1a1aa', fontSize: 11 }} />
-              <YAxis
-                type="category"
-                dataKey="name"
-                tick={{ fill: '#a1a1aa', fontSize: 10 }}
-                width={120}
-              />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a' }}
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                formatter={((value: any) => [`${value}pp`, 'HR Separation (top vs bottom third)']) as any}
-              />
-              <Bar dataKey="separation" radius={[0, 4, 4, 0]}>
-                {featureData.map((entry, i) => (
-                  <Cell
-                    key={i}
-                    fill={entry.separation > 0 ? CHART_COLORS.green : CHART_COLORS.red}
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-          <p className="text-[10px] text-zinc-600 mt-2">
-            Positive separation = high feature values correlate with more hits.
-          </p>
-        </div>
-
-        {/* Score Distribution */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-          <h3 className="text-sm font-medium text-zinc-400 mb-4">Score Distribution</h3>
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={scoreDistribution}>
-              <XAxis dataKey="label" tick={{ fill: '#a1a1aa', fontSize: 11 }} />
-              <YAxis yAxisId="left" tick={{ fill: '#a1a1aa', fontSize: 11 }} />
-              <YAxis
-                yAxisId="right"
-                orientation="right"
-                tick={{ fill: '#a1a1aa', fontSize: 11 }}
-                domain={[0, 100]}
-              />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a' }}
-              />
-              <Legend />
-              <Bar
-                yAxisId="left"
-                dataKey="count"
-                name="Call Count"
-                fill={CHART_COLORS.blue}
-                opacity={0.4}
-                radius={[4, 4, 0, 0]}
-              />
-              <Bar
-                yAxisId="right"
-                dataKey="hitRate"
-                name="Hit Rate %"
-                fill={CHART_COLORS.green}
-                radius={[4, 4, 0, 0]}
-              />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* Band Stats Table */}
+      {/* Detailed Tier Stats Table */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
         <h3 className="text-sm font-medium text-zinc-400 mb-4">
-          Detailed Band Statistics
+          Tier Performance ({scope === 'all' ? 'All Calls' : 'Last 100 Calls'})
         </h3>
         <DataTable
-          data={bt.bandStats as unknown as Record<string, unknown>[]}
-          columns={bandColumns}
+          data={bt.tierStats as unknown as Record<string, unknown>[]}
+          columns={tierColumns}
         />
       </div>
 
-      {/* How the score is calculated */}
+      {/* Scoring Rules Reference */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-        <h3 className="text-sm font-medium text-zinc-400 mb-4">
-          Score Breakdown (v0 Rules)
-        </h3>
+        <h3 className="text-sm font-medium text-zinc-400 mb-4">Scoring Framework</h3>
         <div className="grid md:grid-cols-3 gap-4 text-xs">
           <div className="bg-zinc-800/50 rounded-lg p-3">
-            <div className="font-medium text-white mb-2">Advisor Track Record (0-35pts)</div>
+            <div className="font-medium text-white mb-2">
+              MW Confidence{' '}
+              <span className="text-zinc-500 font-normal">(40% weight)</span>
+            </div>
             <div className="space-y-1 text-zinc-400">
-              <div>70%+ HR → 35pts</div>
-              <div>60-70% HR → 25pts</div>
-              <div>50-60% HR → 15pts</div>
-              <div>40-50% HR → 5pts</div>
-              <div>&lt;3 calls → 12pts (cold start)</div>
+              <div>High → 3</div>
+              <div>Medium → 2</div>
+              <div>Low → 1</div>
             </div>
           </div>
           <div className="bg-zinc-800/50 rounded-lg p-3">
-            <div className="font-medium text-white mb-2">RR Quality (0-20pts)</div>
+            <div className="font-medium text-white mb-2">
+              Advisor 14D HR{' '}
+              <span className="text-zinc-500 font-normal">(35% weight)</span>
+            </div>
             <div className="space-y-1 text-zinc-400">
-              <div>RR 1.0-1.2 → 20pts (tight, high prob)</div>
-              <div>RR 1.2-1.5 → 15pts</div>
-              <div>RR 1.5-1.8 → 10pts</div>
-              <div>RR &gt;1.8 → 5pts (ambitious)</div>
+              <div>65%+ → 3</div>
+              <div>55–64% → 2</div>
+              <div>&lt;55% → 1</div>
             </div>
           </div>
           <div className="bg-zinc-800/50 rounded-lg p-3">
-            <div className="font-medium text-white mb-2">Leverage Band (0-15pts)</div>
-            <div className="space-y-1 text-zinc-400">
-              <div>Low (2-7x) → 15pts</div>
-              <div>Mid (8-14x) → 10pts</div>
-              <div>High (15x+) → 3pts</div>
+            <div className="font-medium text-white mb-2">
+              Token HR{' '}
+              <span className="text-zinc-500 font-normal">(25% weight, min 10 calls)</span>
             </div>
-          </div>
-          <div className="bg-zinc-800/50 rounded-lg p-3">
-            <div className="font-medium text-white mb-2">Token/Category HR (0-15pts)</div>
             <div className="space-y-1 text-zinc-400">
-              <div>Token 65%+ HR → 15pts</div>
-              <div>Token 55-65% → 10pts</div>
-              <div>Token 45-55% → 5pts</div>
-              <div>Falls back to category if &lt;3 calls</div>
-            </div>
-          </div>
-          <div className="bg-zinc-800/50 rounded-lg p-3">
-            <div className="font-medium text-white mb-2">Direction Alignment (0-10pts)</div>
-            <div className="space-y-1 text-zinc-400">
-              <div>Direction 60%+ HR → 10pts</div>
-              <div>Direction 50-60% → 6pts</div>
-              <div>Below 50% → 2pts</div>
-            </div>
-          </div>
-          <div className="bg-zinc-800/50 rounded-lg p-3">
-            <div className="font-medium text-white mb-2">SL Calibration (0-5pts)</div>
-            <div className="space-y-1 text-zinc-400">
-              <div>Within 1% of 20% → 5pts</div>
-              <div>Within 2% → 3pts</div>
-              <div>Outside → 1pt</div>
+              <div>65%+ → 3</div>
+              <div>55–65% → 2</div>
+              <div>&lt;55% → 1</div>
+              <div>&lt;10 calls → default 2</div>
             </div>
           </div>
         </div>
         <div className="mt-4 p-3 bg-zinc-800/30 rounded-lg text-xs text-zinc-500">
-          <strong className="text-zinc-300">Bands:</strong> High (70-100) → ~0.75R | Medium
-          (50-69) → ~0.50R | Standard (0-49) → ~0.25R.{' '}
-          <strong className="text-zinc-300">Key insight:</strong> Band separation of{' '}
-          {bt.overallStats.separation.toFixed(1)}pp means the score{' '}
-          {bt.overallStats.separation > 10
-            ? 'is doing real work — the bands predict meaningfully different outcomes.'
-            : bt.overallStats.separation > 5
-            ? 'shows some signal but needs more data or better features to be actionable.'
-            : 'is not separating well — likely insufficient data or the features need rethinking.'}
+          <strong className="text-zinc-300">Formula:</strong>{' '}
+          <code className="text-zinc-400">0.4 × MW + 0.35 × Advisor + 0.25 × Token</code>{' '}
+          → Range 1.0–3.0.{' '}
+          <strong className="text-zinc-300">Tiers:</strong>{' '}
+          ≥2.5 = <span style={{ color: CHART_COLORS.green }}>Top Pick</span> |{' '}
+          1.8–2.49 = <span style={{ color: CHART_COLORS.blue }}>Standard</span> |{' '}
+          &lt;1.8 = <span style={{ color: CHART_COLORS.orange }}>Aggressive</span>
         </div>
+        {!bt.scoredCalls.some((c) => {
+          const raw = ((c as unknown as Record<string, unknown>)['mw_confidence'] as string || '');
+          return raw !== '';
+        }) && (
+          <div className="mt-2 p-2 bg-amber-500/10 border border-amber-500/20 rounded-lg text-xs text-amber-400">
+            MW Confidence column not found in CSV — defaulting all calls to Medium (score 2).
+            Add a <code>mw_confidence</code> column (High/Medium/Low) to enable full scoring.
+          </div>
+        )}
       </div>
 
-      {/* Recent scored calls */}
+      {/* Example Calculation */}
+      {recentScored.length > 0 && (() => {
+        const ex = recentScored[0];
+        const calc = (0.4 * ex.inputs.mwScore + 0.35 * ex.inputs.advisorHRScore + 0.25 * ex.inputs.tokenHRScore);
+        return (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+            <h3 className="text-sm font-medium text-zinc-400 mb-3">Example Calculation (Most Recent)</h3>
+            <div className="grid md:grid-cols-4 gap-3 text-xs">
+              <div className="bg-zinc-800/50 rounded-lg p-3">
+                <div className="text-zinc-500">Call</div>
+                <div className="text-white font-medium">{ex.token} by {ex.email.split('@')[0]}</div>
+              </div>
+              <div className="bg-zinc-800/50 rounded-lg p-3">
+                <div className="text-zinc-500">Inputs (MW / Adv / Tok)</div>
+                <div className="text-white font-mono">
+                  {ex.inputs.mwScore} / {ex.inputs.advisorHRScore} / {ex.inputs.tokenHRScore}
+                </div>
+                <div className="text-zinc-600 text-[10px] mt-1">
+                  MW={ex.inputs.mwConfidence}, 14D HR={ex.inputs.advisor14dHR}% ({ex.inputs.advisor14dCallCount} calls),
+                  Token={ex.inputs.tokenHR}% ({ex.inputs.tokenCallCount} calls)
+                </div>
+              </div>
+              <div className="bg-zinc-800/50 rounded-lg p-3">
+                <div className="text-zinc-500">Calculation</div>
+                <div className="text-white font-mono text-[11px]">
+                  0.4×{ex.inputs.mwScore} + 0.35×{ex.inputs.advisorHRScore} + 0.25×{ex.inputs.tokenHRScore} = {calc.toFixed(2)}
+                </div>
+              </div>
+              <div className="bg-zinc-800/50 rounded-lg p-3">
+                <div className="text-zinc-500">Result</div>
+                <div className="flex items-center gap-2">
+                  <TierBadge tier={ex.classification} />
+                  <span className="text-zinc-400">→</span>
+                  <span style={{ color: ex.is_system_hit ? CHART_COLORS.green : CHART_COLORS.red }}>
+                    {ex.is_system_hit ? 'TP' : 'SL'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Recent Scored Calls */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
         <h3 className="text-sm font-medium text-zinc-400 mb-4">
-          Recent Scored Calls (last 20 terminated)
+          Recent Scored Calls (last 25 terminated)
         </h3>
         <DataTable
           data={recentScored as unknown as Record<string, unknown>[]}
