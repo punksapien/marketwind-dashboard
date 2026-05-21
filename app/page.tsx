@@ -14,6 +14,7 @@ import { DistributionTab } from '@/components/tabs/DistributionTab';
 import { ValidateTab } from '@/components/tabs/ValidateTab';
 import { ConfidenceTab } from '@/components/tabs/ConfidenceTab';
 import { parseCSV, hasRealResults } from '@/lib/parse-csv';
+import { exportFullReport } from '@/lib/export-excel';
 import { TradeCall } from '@/lib/types';
 
 const TABS: Tab[] = [
@@ -103,6 +104,12 @@ export default function Home() {
                 className="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
               >
                 Export CSV
+              </button>
+              <button
+                onClick={() => exportFullReport(calls, fileName)}
+                className="px-3 py-1.5 text-xs bg-green-600/80 hover:bg-green-600 text-white rounded-lg transition-colors"
+              >
+                Download Excel Report
               </button>
             </div>
           )}
