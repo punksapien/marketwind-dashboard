@@ -74,8 +74,8 @@ function getMWConfidence(call: TradeCall): { level: 'High' | 'Medium' | 'Low'; s
   const raw = ((call as unknown as Record<string, unknown>)[MW_CONFIDENCE_COLUMN] as string || '').toUpperCase().trim();
   if (raw === 'HIGH' || raw === 'H' || raw === '3') return { level: 'High', score: 3 };
   if (raw === 'LOW' || raw === 'L' || raw === '1') return { level: 'Low', score: 1 };
-  // Default to Medium when column is missing or value is Medium
-  return { level: 'Medium', score: 2 };
+  // Default to High — in practice advisors almost always mark High
+  return { level: 'High', score: 3 };
 }
 
 // ============================================
